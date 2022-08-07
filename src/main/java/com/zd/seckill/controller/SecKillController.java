@@ -20,6 +20,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.util.CollectionUtils;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -57,16 +58,16 @@ public class SecKillController implements InitializingBean {
 
 
     @RequestMapping("/doSeckill1")
-    public String doSecKill1(Model model, User user, Long goodsId){
-        if(user == null){
+    public String doSecKill1(Model model, User user, Long goodsId) {
+        if (user == null) {
             return "login";
         }
 
-        model.addAttribute("user",user);
+        model.addAttribute("user", user);
 
         GoodsVo goods = goodsService.findGoodsVoByGoodsId(goodsId);
         //判断库存
-        if(goods.getStockCount()<1){
+        if (goods.getStockCount() < 1) {
             //库存不足
             model.addAttribute("errmsg", RespBeanEnum.EMPTY_STOCK.getMessage());
             return "secKillFail";
@@ -75,43 +76,49 @@ public class SecKillController implements InitializingBean {
         SeckillOrder seckillOrder = seckillOrderService.getOne(new QueryWrapper<SeckillOrder>().eq("user_id", user.getId())
                 .eq("goods_id", goodsId));
 
-        if(seckillOrder!=null){
+        if (seckillOrder != null) {
             //重复抢购
-            model.addAttribute("errmsg",RespBeanEnum.REPEATE_ERROT.getMessage());
+            model.addAttribute("errmsg", RespBeanEnum.REPEATE_ERROT.getMessage());
             return "secKillFail";
         }
 
-        Order order = orderService.seckill(user,goods);
-        model.addAttribute("order",order);
-        model.addAttribute("goods",goods);
+        Order order = orderService.seckill(user, goods);
+        model.addAttribute("order", order);
+        model.addAttribute("goods", goods);
         return "orderDetail";
 
     }
 
-    @RequestMapping(value = "/doSeckill", method = RequestMethod.POST)
+    @RequestMapping(value = "/{path}/doSeckill", method = RequestMethod.POST)
     @ResponseBody
-    public RespBean doSecKill(User user, Long goodsId){
-        if(user == null){
+    public RespBean doSecKill(@PathVariable String path, User user, Long goodsId) {
+        if (user == null) {
             return RespBean.error(RespBeanEnum.SESSION_ERROR);
         }
 
         ValueOperations valueOperations = redisTemplate.opsForValue();
 
+        //检验path
+        boolean check = orderService.checkPath(user, goodsId, path);
+        if (!check) {
+            return RespBean.error(RespBeanEnum.REQUEST_ILLEGAL);
+        }
+
         //判断是否重复抢购
         SeckillOrder seckillOrder = (SeckillOrder) redisTemplate.opsForValue().get("order:" + user.getId() + ":" + goodsId);
-        if(seckillOrder!=null){
+        if (seckillOrder != null) {
             //重复抢购
             return RespBean.error(RespBeanEnum.REPEATE_ERROT);
         }
         //通过内存标记，减少redis访问
-        if(EmptyStockMap.get(goodsId)){
+        if (EmptyStockMap.get(goodsId)) {
             return RespBean.error(RespBeanEnum.EMPTY_STOCK);
         }
         //预减库存操作，且为原子性
         Long stock = valueOperations.decrement("seckillGoods:" + goodsId);
-        if(stock<0){
+        if (stock < 0) {
 
-            EmptyStockMap.put(goodsId,true);
+            EmptyStockMap.put(goodsId, true);
 
             //valueOperations.increment("seckillGoods:" + goodsId);
 
@@ -158,35 +165,56 @@ public class SecKillController implements InitializingBean {
 
     /**
      * 获取秒杀结果：orderId:成功，-1：秒杀失败，0：排队中
+     *
      * @param user
      * @param goodsId
      * @return
      */
-    @RequestMapping(value = "/getResult",method = RequestMethod.GET)
+    @RequestMapping(value = "/getResult", method = RequestMethod.GET)
     @ResponseBody
-    public RespBean getResult(User user,Long goodsId){
-        if(user == null){
+    public RespBean getResult(User user, Long goodsId) {
+        if (user == null) {
             return RespBean.error(RespBeanEnum.SESSION_ERROR);
         }
 
-        Long orderId = seckillOrderService.getResult(user,goodsId);
+        Long orderId = seckillOrderService.getResult(user, goodsId);
         return RespBean.success(orderId);
     }
 
     /**
+     * 获取秒杀地址,秒杀地址要和用户和商品保持唯一
+     *
+     * @param user
+     * @param goodsId
+     * @return
+     */
+    @RequestMapping(value = "/path", method = RequestMethod.GET)
+    @ResponseBody
+    public RespBean getPath(User user, Long goodsId) {
+        if (user == null) {
+            return RespBean.error(RespBeanEnum.SESSION_ERROR);
+        }
+        String str = orderService.createPath(user, goodsId);
+        return RespBean.success(str);
+    }
+
+    /**
      * 初始化方法，可以把商品库存数量加载到redis中去
+     *
      * @throws Exception
      */
     @Override
     public void afterPropertiesSet() throws Exception {
         List<GoodsVo> list = goodsService.findGoodsVo();
-        if(CollectionUtils.isEmpty(list)){
+        if (CollectionUtils.isEmpty(list)) {
             return;
         }
         list.forEach(goodsVo -> {
 
-            redisTemplate.opsForValue().set("seckillGoods:"+goodsVo.getId(),goodsVo.getStockCount());
-            EmptyStockMap.put(goodsVo.getId(),false);
+            redisTemplate.opsForValue().set("seckillGoods:" + goodsVo.getId(), goodsVo.getStockCount());
+            EmptyStockMap.put(goodsVo.getId(), false);
         });
     }
+
+
 }
