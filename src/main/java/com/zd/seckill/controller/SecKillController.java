@@ -1,10 +1,12 @@
 package com.zd.seckill.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.wf.captcha.ArithmeticCaptcha;
 import com.zd.seckill.entity.Order;
 import com.zd.seckill.entity.SeckillMessage;
 import com.zd.seckill.entity.SeckillOrder;
 import com.zd.seckill.entity.User;
+import com.zd.seckill.exception.GlobalException;
 import com.zd.seckill.rabbitmq.MQSender;
 import com.zd.seckill.service.IGoodsService;
 import com.zd.seckill.service.IOrderService;
@@ -13,6 +15,7 @@ import com.zd.seckill.utils.JsonUtil;
 import com.zd.seckill.vo.GoodsVo;
 import com.zd.seckill.vo.RespBean;
 import com.zd.seckill.vo.RespBeanEnum;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -25,16 +28,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author zd
  * @date 2022/5/6 10:50
  * 描述：秒杀
  */
+@Slf4j
 @Controller
 @RequestMapping("/seckill")
 public class SecKillController implements InitializingBean {
@@ -190,12 +198,44 @@ public class SecKillController implements InitializingBean {
      */
     @RequestMapping(value = "/path", method = RequestMethod.GET)
     @ResponseBody
-    public RespBean getPath(User user, Long goodsId) {
+    public RespBean getPath(User user, Long goodsId, String captcha, HttpServletRequest request) {
         if (user == null) {
+            return RespBean.error(RespBeanEnum.SESSION_ERROR);
+        }
+
+        ValueOperations valueOperations = redisTemplate.opsForValue();
+
+
+        boolean check = orderService.checkCaptcha(user,goodsId,captcha);
+        if(!check){
             return RespBean.error(RespBeanEnum.SESSION_ERROR);
         }
         String str = orderService.createPath(user, goodsId);
         return RespBean.success(str);
+    }
+
+    @RequestMapping(value = "/captcha", method = RequestMethod.GET)
+    public void verifyCode(User user, Long goodsId, HttpServletResponse response) {
+        if (user == null || goodsId < 0) {
+            throw new GlobalException(RespBeanEnum.REQUEST_ILLEGAL);
+        }
+        //设置请求头为输出图片的类型
+        response.setContentType("/image/jpg");
+        response.setHeader("Pargam","No-cache");
+        response.setHeader("Cache-Control","No-cache");
+        response.setDateHeader("Expires",0);
+        //生成验证码
+        ArithmeticCaptcha arithmeticCaptcha = new ArithmeticCaptcha(130, 32, 3);
+
+        redisTemplate.opsForValue().set("captcha:"+user.getId()+":"+goodsId,arithmeticCaptcha.text(),300, TimeUnit.SECONDS);
+
+        try {
+            arithmeticCaptcha.out(response.getOutputStream());
+        } catch (IOException e) {
+            log.error("验证码生成失败",e.getMessage());
+        }
+
+
     }
 
     /**

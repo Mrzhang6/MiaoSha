@@ -24,7 +24,8 @@ public enum RespBeanEnum {
     MOBIEL_NOT_EXIST(500212,"手机号不存早"),
     PASSWORD_UPDATE_FAIL(500213,"更新密码错误"),
     SESSION_ERROR(500214,"登录错误"),
-
+    ERROR_CAPTCHA(500215,"验证码错误"),
+    ERROR_LIMIT(500216,"访问过于频繁，请稍后再试"),
     //绑定ERROR
     BIND_ERROR(500212,"参数校验异常"),
 
